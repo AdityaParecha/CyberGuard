@@ -1,4 +1,3 @@
-
 from typing import Optional, Any
 
 from pydantic import BaseModel, Field
@@ -38,10 +37,14 @@ class IncidentResult(BaseModel):
     report: str
 
     evidence_summary: Optional[Any] = None
+
     forensic_artifact_analyses: list[dict[str, Any]] = Field(
         default_factory=list
     )
+
     crewai_review: Optional[Any] = None
+    a2a_review: Optional[dict[str, Any]] = None
+
     crew_agents: list[dict[str, Any]] = Field(default_factory=list)
 
     agent_findings: dict[str, Any] = Field(default_factory=dict)

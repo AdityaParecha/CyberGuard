@@ -1,8 +1,10 @@
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config.settings import APP_NAME
 from backend.app.api.routes import router
+from backend.app.a2a.server import app as a2a_app
 
 app = FastAPI(
     title=APP_NAME,
@@ -28,3 +30,6 @@ def home():
         "docs": "/docs",
         "health": "/api/health"
     }
+
+
+app.mount("/", a2a_app)
