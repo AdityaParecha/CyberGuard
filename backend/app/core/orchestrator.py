@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import time
@@ -35,6 +36,7 @@ from backend.app.services.tsk_service import (
 )
 
 from backend.app.services.ollama_service import analyze_forensic_artifact
+from backend.app.adk.adk_service import review_investigation
 
 
 logger = logging.getLogger("cyberguard.investigation")
@@ -832,6 +834,63 @@ def run_investigation(
             ),
         )
 
+        def perform_adk_review() -> dict[str, Any]:
+            try:
+                review = asyncio.run(
+                    review_investigation(
+                        evidence=evidence,
+                        hypotheses=hypotheses,
+                        timeline=timeline,
+                        report=report,
+                        crewai_review=crewai_review,
+                        incident_id=incident_id,
+                    )
+                )
+
+                return {
+                    "status": "completed",
+                    "review": review.model_dump(mode="json"),
+                }
+
+            except Exception as error:
+                logger.exception(
+                    "Google ADK review unavailable: "
+                    "incident_id=%s error_type=%s",
+                    incident_id,
+                    type(error).__name__,
+                )
+
+                return {
+                    "status": "incomplete",
+                    "review": {
+                        "review_status": "unavailable",
+                        "overall_assessment": (
+                            "The Google ADK reviewer could not complete "
+                            "this review. The investigation results were retained."
+                        ),
+                        "claim_assessments": [],
+                        "hypothesis_issues": [],
+                        "timeline_issues": [],
+                        "missing_evidence": [],
+                        "recommendations": [
+                            "Retry the ADK review when the local Ollama "
+                            "service is available."
+                        ],
+                        "limitations": [
+                            "An independent Google ADK review was not completed."
+                        ],
+                        "human_review_required": True,
+                        "error_type": type(error).__name__,
+                    },
+                }
+
+        adk_stage_result = _run_stage(
+            stages,
+            "google_adk_forensic_review",
+            perform_adk_review,
+        )
+        adk_review = adk_stage_result["review"]
+
         evidence_summary = _run_stage(
             stages,
             "evidence_summarization",
@@ -926,9 +985,12 @@ def run_investigation(
             result_data
         )
 
-        return validated_result.model_dump(
+        final_result = validated_result.model_dump(
             mode="json"
         )
+        final_result["adk_review"] = adk_review
+
+        return final_result
 
     except Exception as error:
 

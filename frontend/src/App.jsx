@@ -1,5 +1,5 @@
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const API_BASE_URL = "http://127.0.0.1:8000/api";
@@ -20,6 +20,19 @@ function displayValue(value, fallback = "Not available") {
   }
 
   return JSON.stringify(value, null, 2);
+}
+
+function formatElapsedTime(totalSeconds) {
+  const seconds = Math.max(0, Number(totalSeconds) || 0);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
 function formatArtifactSource(source, index) {
@@ -295,6 +308,144 @@ function CrewAIReview({ review }) {
   );
 }
 
+function ADKReview({ review }) {
+  if (!review || typeof review !== "object") {
+    return (
+      <div className="adk-review empty-state">
+        Google ADK review was not included in this API response. Confirm that the updated backend orchestrator is installed and running.
+      </div>
+    );
+  }
+
+  const status = String(review.review_status || "inconclusive").toLowerCase();
+  const claimAssessments = Array.isArray(review.claim_assessments) ? review.claim_assessments : [];
+  const sections = [
+    { title: "Hypothesis issues", items: review.hypothesis_issues },
+    { title: "Timeline issues", items: review.timeline_issues },
+    { title: "Missing evidence", items: review.missing_evidence },
+    { title: "Recommendations", items: review.recommendations },
+    { title: "Limitations", items: review.limitations },
+  ].filter((section) => Array.isArray(section.items) && section.items.length > 0);
+
+  return (
+    <div className="adk-review">
+      <div className="adk-review-header">
+        <span className={`adk-status adk-status-${status.replaceAll("_", "-")}`}>{status.replaceAll("_", " ")}</span>
+        <span className="muted">Independent Google ADK review · Ollama</span>
+      </div>
+      <p className="adk-assessment">{displayValue(review.overall_assessment, "No overall assessment was returned.")}</p>
+      {claimAssessments.length > 0 && (
+        <div className="adk-claims">
+          <h4>Claim assessments</h4>
+          {claimAssessments.map((claim, index) => {
+            const verdict = String(claim.verdict || "unverifiable").toLowerCase();
+            return (
+              <article className="adk-claim-card" key={`${claim.claim || "claim"}-${index}`}>
+                <div className="adk-claim-heading">
+                  <strong>{displayValue(claim.claim, `Claim ${index + 1}`)}</strong>
+                  <span className={`adk-verdict adk-verdict-${verdict.replaceAll("_", "-")}`}>{verdict.replaceAll("_", " ")}</span>
+                </div>
+                <p>{displayValue(claim.explanation)}</p>
+                <span className="adk-evidence-ids">Evidence IDs: {Array.isArray(claim.evidence_ids) && claim.evidence_ids.length ? claim.evidence_ids.join(", ") : "None cited"}</span>
+              </article>
+            );
+          })}
+        </div>
+      )}
+      {sections.map((section) => (
+        <div className="adk-list-section" key={section.title}>
+          <h4>{section.title}</h4>
+          <ul>{section.items.map((item, index) => <li key={index}>{displayValue(item)}</li>)}</ul>
+        </div>
+      ))}
+      <div className={`adk-human-review ${review.human_review_required ? "required" : "not-required"}`}>
+        <strong>Human forensic review:</strong>{" "}
+        {review.human_review_required ? "Required before relying on conclusions." : "Not flagged by the model; investigator validation is still recommended."}
+      </div>
+    </div>
+  );
+}
+
+function AccuracyEvaluation({ result }) {
+  const metrics =
+    result?.evaluation_metrics ??
+    result?.accuracy_metrics ??
+    result?.model_evaluation ??
+    result?.metrics?.classification ??
+    result?.metrics ??
+    result?.monitoring?.evaluation_metrics ??
+    null;
+
+  const definitions = [
+    { key: "accuracy", label: "Accuracy" },
+    { key: "precision", label: "Precision" },
+    { key: "recall", label: "Recall" },
+    { key: "f1_score", aliases: ["f1", "f1Score"], label: "F1 score" },
+  ];
+  const readMetric = (definition) => {
+    if (!metrics || typeof metrics !== "object") return undefined;
+    const key = [definition.key, ...(definition.aliases || [])].find((candidate) => metrics[candidate] !== undefined && metrics[candidate] !== null);
+    return key ? metrics[key] : undefined;
+  };
+  const hasMetrics = definitions.some((definition) => readMetric(definition) !== undefined);
+  const matrix = metrics?.confusion_matrix ?? metrics?.confusionMatrix ?? result?.confusion_matrix ?? null;
+  const matrixObject = matrix && !Array.isArray(matrix) && typeof matrix === "object" ? matrix : null;
+  const matrixKeys = ["tp", "tn", "fp", "fn", "true_positive", "true_negative", "false_positive", "false_negative"];
+  const hasMatrixObject = Boolean(matrixObject && matrixKeys.some((key) => matrixObject[key] !== undefined));
+  const hasMatrixArray = Array.isArray(matrix) && matrix.length > 0 && matrix.every((row) => Array.isArray(row));
+  const formatMetric = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${(numeric <= 1 ? numeric * 100 : numeric).toFixed(1)}%` : displayValue(value);
+  };
+
+  return (
+    <div className="accuracy-evaluation">
+      {hasMetrics ? (
+        <div className="accuracy-metric-grid">
+          {definitions.map((definition) => {
+            const value = readMetric(definition);
+            return value === undefined ? null : (
+              <article className="accuracy-metric-card" key={definition.key}>
+                <span>{definition.label}</span>
+                <strong>{formatMetric(value)}</strong>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="empty-state">
+          Accuracy, precision, recall, and F1 score have not been calculated for this investigation. These require labelled test data and measured predictions; evidence counts and hypothesis confidence scores are not substitutes for accuracy.
+        </p>
+      )}
+      {(hasMatrixArray || hasMatrixObject) && (
+        <div className="confusion-matrix-wrap">
+          <h4>Confusion matrix</h4>
+          {hasMatrixArray ? (
+            <div className="table-scroll">
+              <table className="confusion-matrix">
+                <thead><tr><th>Actual / Predicted</th>{matrix[0].map((_, index) => <th key={index}>Class {index + 1}</th>)}</tr></thead>
+                <tbody>{matrix.map((row, rowIndex) => <tr key={rowIndex}><th>Class {rowIndex + 1}</th>{row.map((value, columnIndex) => <td key={columnIndex}>{displayValue(value)}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="confusion-matrix-grid">
+              {[
+                ["True positive", matrixObject.tp ?? matrixObject.true_positive],
+                ["False positive", matrixObject.fp ?? matrixObject.false_positive],
+                ["False negative", matrixObject.fn ?? matrixObject.false_negative],
+                ["True negative", matrixObject.tn ?? matrixObject.true_negative],
+              ].filter(([, value]) => value !== undefined).map(([label, value]) => (
+                <div className="confusion-cell" key={label}><span>{label}</span><strong>{displayValue(value)}</strong></div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <p className="muted accuracy-note">Evaluation metrics are displayed only when returned by the backend. They should be calculated against a labelled validation dataset, not inferred from a single investigation.</p>
+    </div>
+  );
+}
+
 function MonitoringPanel({ monitoring }) {
   if (!monitoring || typeof monitoring !== "object") {
     return (
@@ -404,6 +555,46 @@ function MonitoringPanel({ monitoring }) {
   );
 }
 
+function ProcessingPanel({ phase, elapsedSeconds, uploadPercent, fileName }) {
+  const uploading = phase === "uploading";
+  return (
+    <section className="processing-card" role="status" aria-live="polite">
+      <div className="processing-visual" aria-hidden="true">
+        <div className="processing-orbit processing-orbit-one" />
+        <div className="processing-orbit processing-orbit-two" />
+        <div className="processing-core"><span>CG</span></div>
+        <div className="processing-scan-line" />
+      </div>
+      <div className="processing-copy">
+        <span className="processing-kicker">{uploading ? "EVIDENCE TRANSFER" : "LIVE INVESTIGATION"}</span>
+        <h3>{uploading ? "Uploading forensic image" : "Investigation in progress"}</h3>
+        <p>
+          {uploading
+            ? `Transferring ${fileName || "the selected forensic image"} to the CyberGuard backend.`
+            : "CyberGuard is processing the investigation. The activity graphic is animated; exact backend stage progress appears when the API returns its monitoring data."}
+        </p>
+        {uploading ? (
+          <>
+            <div className="processing-progress-label"><span>Upload progress</span><strong>{uploadPercent}%</strong></div>
+            <div className="processing-progress-track" role="progressbar" aria-label="Forensic image upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={uploadPercent}>
+              <div className="processing-progress-fill" style={{ width: `${uploadPercent}%` }} />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="processing-progress-label"><span>Backend processing</span><strong>Running</strong></div>
+            <div className="processing-indeterminate-track" aria-hidden="true"><span /></div>
+          </>
+        )}
+        <div className="processing-meta">
+          <div><span className="processing-live-dot" /><span>{uploading ? "Uploading" : "Waiting for investigation response"}</span></div>
+          <strong>Elapsed {formatElapsedTime(elapsedSeconds)}</strong>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -413,6 +604,9 @@ function App() {
   const [imageFile, setImageFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
+  const [uploadPercent, setUploadPercent] = useState(0);
+  const [activePhase, setActivePhase] = useState("idle");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -422,6 +616,24 @@ function App() {
   const [severityFilter, setSeverityFilter] = useState("all");
 
   const fileInputRef = useRef(null);
+  const startedAtRef = useRef(null);
+
+  useEffect(() => {
+    if (!loading) return undefined;
+
+    const updateElapsed = () => {
+      if (startedAtRef.current) {
+        setElapsedSeconds(
+          Math.floor((Date.now() - startedAtRef.current) / 1000)
+        );
+      }
+    };
+
+    updateElapsed();
+    const timerId = window.setInterval(updateElapsed, 1000);
+
+    return () => window.clearInterval(timerId);
+  }, [loading]);
 
   function validateImageFile(file) {
     if (!file) {
@@ -460,6 +672,8 @@ function App() {
     if (validationError) {
       setError(validationError);
       setImageFile(null);
+      setUploadPercent(0);
+      setActivePhase("idle");
       return;
     }
 
@@ -467,6 +681,8 @@ function App() {
     setImageFile(file);
     setImagePath("");
     setUploadProgress("");
+    setUploadPercent(0);
+    setActivePhase("idle");
   }
 
   function handleDrop(event) {
@@ -480,51 +696,89 @@ function App() {
     }
   }
 
-  async function uploadForensicImage(file) {
+  function uploadForensicImage(file) {
     const formData = new FormData();
     formData.append("file", file);
 
+    setActivePhase("uploading");
+    setUploadPercent(0);
     setUploadProgress("Uploading forensic image...");
 
-    const response = await fetch(
-      `${API_BASE_URL}/forensics/upload`,
-      {
-        method: "POST",
-        body: formData,
-      }
-    );
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
 
-    const data = await response.json().catch(() => ({}));
+      xhr.open("POST", `${API_BASE_URL}/forensics/upload`);
 
-    if (!response.ok) {
-      throw new Error(
-        typeof data.detail === "string"
-          ? data.detail
-          : "The forensic image upload failed."
-      );
-    }
+      xhr.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          setUploadPercent(percent);
+          setUploadProgress(`Uploading forensic image... ${percent}%`);
+        }
+      });
 
-    if (!data.image_path) {
-      throw new Error(
-        "The upload response did not include an image path."
-      );
-    }
+      xhr.addEventListener("error", () => {
+        reject(
+          new Error(
+            "The image upload failed because the backend could not be reached."
+          )
+        );
+      });
 
-    setImagePath(data.image_path);
+      xhr.addEventListener("abort", () => {
+        reject(new Error("The image upload was cancelled."));
+      });
 
-    setUploadProgress(
-      `Upload complete: ${data.filename || file.name} (${(
-        (data.size_bytes || file.size) /
-        (1024 * 1024)
-      ).toFixed(2)} MB)`
-    );
+      xhr.addEventListener("load", () => {
+        let data = {};
 
-    return data.image_path;
+        try {
+          data = JSON.parse(xhr.responseText || "{}");
+        } catch {
+          data = {};
+        }
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(
+            new Error(
+              typeof data.detail === "string"
+                ? data.detail
+                : "The forensic image upload failed."
+            )
+          );
+          return;
+        }
+
+        if (!data.image_path) {
+          reject(
+            new Error("The upload response did not include an image path.")
+          );
+          return;
+        }
+
+        setUploadPercent(100);
+        setImagePath(data.image_path);
+        setUploadProgress(
+          `Upload complete: ${data.filename || file.name} (${(
+            (data.size_bytes || file.size) /
+            (1024 * 1024)
+          ).toFixed(2)} MB)`
+        );
+        setActivePhase("investigating");
+        resolve(data.image_path);
+      });
+
+      xhr.send(formData);
+    });
   }
 
   async function handleInvestigation(event) {
     event.preventDefault();
 
+    startedAtRef.current = Date.now();
+    setElapsedSeconds(0);
+    setUploadPercent(0);
+    setActivePhase(imageFile ? "uploading" : "investigating");
     setLoading(true);
     setError("");
     setResult(null);
@@ -539,10 +793,11 @@ function App() {
         selectedImagePath = await uploadForensicImage(imageFile);
       }
 
+      setActivePhase("investigating");
       setUploadProgress(
         selectedImagePath
-          ? "Starting investigation with the selected forensic image..."
-          : "Starting investigation..."
+          ? "Image uploaded. Investigation is running..."
+          : "Investigation is running..."
       );
 
       const payload = {
@@ -555,37 +810,56 @@ function App() {
         payload.image_path = selectedImagePath;
       }
 
-      const response = await fetch(
-        `${API_BASE_URL}/investigations`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/investigations`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
 
-      const data = await response.json().catch(() => ({}));
+      const responseText = await response.text();
+      let data = {};
+
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(
+          "The investigation API returned a response that was not valid JSON."
+        );
+      }
 
       if (!response.ok) {
         throw new Error(
           typeof data.detail === "string"
             ? data.detail
             : JSON.stringify(data.detail) ||
-                "Investigation failed. Check the submitted details."
+                `Investigation failed (HTTP ${response.status}).`
+        );
+      }
+
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error(
+          "The investigation API returned an unexpected response format."
         );
       }
 
       setResult(data);
+      setActivePhase("completed");
       setUploadProgress("");
     } catch (err) {
       setError(
         err.message ||
           "Could not connect to CyberGuard. Check that the backend is running."
       );
+      setActivePhase("error");
       setUploadProgress("");
     } finally {
+      if (startedAtRef.current) {
+        setElapsedSeconds(
+          Math.floor((Date.now() - startedAtRef.current) / 1000)
+        );
+      }
       setLoading(false);
     }
   }
@@ -788,6 +1062,15 @@ function App() {
 
     const crewReview =
       result.crewai_review ?? result.crewai_analysis ?? null;
+    const adkReview = result.adk_review ?? null;
+    const evaluationMetrics =
+      result.evaluation_metrics ??
+      result.accuracy_metrics ??
+      result.model_evaluation ??
+      result.metrics?.classification ??
+      result.metrics ??
+      result.monitoring?.evaluation_metrics ??
+      null;
 
     const crewReviewText =
       crewReview && typeof crewReview === "object"
@@ -799,6 +1082,15 @@ function App() {
         : typeof crewReview === "string"
           ? crewReview
           : "";
+
+    const adkReviewHtml = adkReview
+      ? `<pre>${safe(adkReview)}</pre>`
+      : "<p>Google ADK review was not returned by the backend.</p>";
+
+    const evaluationHtml =
+      evaluationMetrics && typeof evaluationMetrics === "object"
+        ? `<pre>${safe(evaluationMetrics)}</pre>`
+        : "<p>No measured accuracy metrics were returned. Accuracy requires labelled evaluation data.</p>";
 
     const monitoring = result.monitoring ?? {};
 
@@ -1018,7 +1310,17 @@ ${section(
 )}
 
 ${section(
-  "9. Monitoring and Evaluation",
+  "9. Google ADK Independent Forensic Review",
+  adkReviewHtml
+)}
+
+${section(
+  "10. Accuracy and Model Evaluation",
+  evaluationHtml
+)}
+
+${section(
+  "11. Monitoring and Evaluation",
   `<p><b>Total runtime:</b> ${safe(monitoring.total_runtime_seconds)} seconds</p>
    <p><b>Stage count:</b> ${safe(monitoring.stage_count, monitoringStages.length)}</p>
    <p><b>Failed stages:</b> ${safe(monitoring.failed_stage_count, 0)}</p>
@@ -1031,14 +1333,14 @@ ${section(
 )}
 
 ${section(
-  "10. Unified Investigation Report",
+  "12. Unified Investigation Report",
   `<pre>${originalReport}</pre>`
 )}
 
-${section("11. Collection Warnings", warningsHtml)}
+${section("13. Collection Warnings", warningsHtml)}
 
 ${section(
-  "12. Limitations and Professional Review",
+  "14. Limitations and Professional Review",
   `<div class="disclaimer">
     <p>This report reflects the data returned by CyberGuard at the time
     of generation. It does not independently certify the authenticity,
@@ -1121,6 +1423,7 @@ ${section(
   const summary = result?.evidence_summary || {};
   const severityCounts = summary.by_severity || {};
   const crewaiReview = result?.crewai_review || result?.crewai_analysis || null;
+  const adkReview = result?.adk_review || null;
   const monitoring = result?.monitoring || null;
 
   const filteredEvidence = evidence.filter((item) => {
@@ -1303,6 +1606,8 @@ ${section(
                     onClick={() => {
                       setImageFile(null);
                       setUploadProgress("");
+                      setUploadPercent(0);
+                      setActivePhase("idle");
                     }}
                     disabled={loading}
                     aria-label="Remove selected image"
@@ -1329,6 +1634,8 @@ ${section(
                 setImagePath(event.target.value);
                 setImageFile(null);
                 setUploadProgress("");
+                setUploadPercent(0);
+                setActivePhase("idle");
               }}
               placeholder="e.g. G:\C1Prj01.E01"
               disabled={loading}
@@ -1354,6 +1661,15 @@ ${section(
           </button>
         </form>
 
+        {loading && (
+          <ProcessingPanel
+            phase={activePhase}
+            elapsedSeconds={elapsedSeconds}
+            uploadPercent={uploadPercent}
+            fileName={imageFile?.name}
+          />
+        )}
+
         {error && (
           <p className="error" role="alert">
             {error}
@@ -1375,9 +1691,14 @@ ${section(
             </div>
 
             <div className="results-actions">
-              <span className="completed-label">
-                ● {displayValue(result.status, "completed")}
-              </span>
+              <div className="results-status-group">
+                <span className="completed-label">
+                  ● {displayValue(result.status, "completed")}
+                </span>
+                <span className="client-elapsed-time">
+                  Client elapsed: {formatElapsedTime(elapsedSeconds)}
+                </span>
+              </div>
 
               <button
                 type="button"
@@ -1419,6 +1740,25 @@ ${section(
               Evidence-led interpretation with explicit validation status.
             </p>
             <CrewAIReview review={crewaiReview} />
+          </section>
+
+          <section className="dashboard-section">
+            <h3>Google ADK Independent Forensic Review</h3>
+            <p className="muted">
+              ADK independently checks investigation claims against supplied
+              evidence and highlights unsupported conclusions and missing
+              information.
+            </p>
+            <ADKReview review={adkReview} />
+          </section>
+
+          <section className="dashboard-section">
+            <h3>Accuracy and Model Evaluation</h3>
+            <p className="muted">
+              Classification metrics and confusion-matrix values are shown
+              only when measured evaluation data is returned by the backend.
+            </p>
+            <AccuracyEvaluation result={result} />
           </section>
 
           <section className="dashboard-section">
@@ -1592,10 +1932,10 @@ ${section(
             <h3>Unified Investigation Report</h3>
 
             <pre>
-              {typeof result.report === "string"
-                ? result.report
+              {typeof (result.report ?? result.final_report ?? result.investigation_report) === "string"
+                ? (result.report ?? result.final_report ?? result.investigation_report)
                 : JSON.stringify(
-                    result.report ?? "No report available.",
+                    result.report ?? result.final_report ?? result.investigation_report ?? "No report available.",
                     null,
                     2
                   )}
