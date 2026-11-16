@@ -2,8 +2,12 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const API_BASE_URL = "http://127.0.0.1:8000/api";
-const MAX_IMAGE_SIZE = 500 * 1024 * 1024;
+// Dev (npm run dev) talks to the local backend directly. The production
+// build is served by nginx on the same host, so it uses a relative path.
+// Override with VITE_API_BASE_URL if the API lives elsewhere.
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://127.0.0.1:8000/api" : "/api");
 const ALLOWED_EXTENSIONS = [".dd", ".img", ".raw", ".e01"];
 
 function displayValue(value, fallback = "Not available") {
@@ -655,10 +659,6 @@ function App() {
 
     if (file.size === 0) {
       return "The selected file is empty.";
-    }
-
-    if (file.size > MAX_IMAGE_SIZE) {
-      return "The image exceeds the 500 MB upload limit.";
     }
 
     return "";
@@ -1563,7 +1563,7 @@ ${section(
               </strong>
 
               <p className="muted">
-                Supported formats: .E01, .DD, .IMG, .RAW · Maximum 500 MB
+                Supported formats: .E01, .DD, .IMG, .RAW
               </p>
 
               <button

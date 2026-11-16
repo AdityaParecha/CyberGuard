@@ -58,10 +58,9 @@ def after_model_callback(
     callback_context: CallbackContext,
     llm_response: Any
 ) -> None:
-    started = callback_context.state.pop(
-        "cyberguard_model_started",
-        None
-    )
+    # ADK's State object has no pop(); read the value, then clear it.
+    started = callback_context.state.get("cyberguard_model_started")
+    callback_context.state["cyberguard_model_started"] = None
 
     if started is not None:
         duration = time.perf_counter() - started
@@ -79,10 +78,9 @@ def on_model_error_callback(
     llm_request: Any,
     error: BaseException
 ) -> None:
-    started = callback_context.state.pop(
-        "cyberguard_model_started",
-        None
-    )
+    # ADK's State object has no pop(); read the value, then clear it.
+    started = callback_context.state.get("cyberguard_model_started")
+    callback_context.state["cyberguard_model_started"] = None
 
     duration = (
         time.perf_counter() - started
@@ -106,7 +104,7 @@ root_agent = LlmAgent(
     name="cyberguard_adk_forensic_reviewer",
 
     model=LiteLlm(
-        model="ollama_chat/qwen2.5:3b"
+        model=f"ollama_chat/{os.getenv('OLLAMA_MODEL', 'mistral:latest')}"
     ),
 
     description=(

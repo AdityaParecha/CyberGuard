@@ -25,7 +25,6 @@ router = APIRouter()
 
 # Forensic image upload settings
 UPLOAD_DIR = Path(__file__).resolve().parents[3] / "data" / "uploads"
-MAX_UPLOAD_BYTES = 1024 * 1024 * 1024  # 1024 MB
 
 ALLOWED_IMAGE_EXTENSIONS = {
     ".dd",
@@ -175,13 +174,6 @@ async def upload_forensic_image(file: UploadFile = File(...)):
                     break
 
                 total_bytes += len(chunk)
-
-                if total_bytes > MAX_UPLOAD_BYTES:
-                    raise HTTPException(
-                        status_code=413,
-                        detail="Image exceeds the 500 MB upload limit.",
-                    )
-
                 destination.write(chunk)
 
         if total_bytes == 0:

@@ -1,0 +1,18 @@
+[Unit]
+Description=CyberGuard API
+After=network-online.target ollama.service
+Wants=network-online.target ollama.service
+
+[Service]
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=-__APP_DIR__/.env
+Environment=PYTHONWARNINGS=ignore
+# Single worker on purpose: the A2A reviewer calls back into this same
+# process over HTTP and keeps its task store in memory.
+ExecStart=__APP_DIR__/.venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

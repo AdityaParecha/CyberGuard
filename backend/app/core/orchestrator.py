@@ -941,7 +941,7 @@ def run_investigation(
             "incomplete_stage_count": incomplete_stage_count,
             "model": os.getenv(
                 "OLLAMA_MODEL",
-                "qwen2.5:3b",
+                "mistral:latest",
             ),
             "ollama_base_url": os.getenv(
                 "OLLAMA_BASE_URL",

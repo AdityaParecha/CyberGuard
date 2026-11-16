@@ -24,6 +24,7 @@ from backend.app.core.crewai_investigator import (
     DEFAULT_MODEL,
     _redact_ai_output,
     _redact_secrets_for_ai,
+    build_ollama_llm,
 )
 
 logger = logging.getLogger("cyberguard.crew_agents")
@@ -106,15 +107,31 @@ def crew_agents_enabled() -> bool:
 
 
 def _build_llm() -> Any:
-    from langchain_community.llms import Ollama
-
-    return Ollama(
-        model=os.getenv("OLLAMA_MODEL", DEFAULT_MODEL),
-        base_url=os.getenv("OLLAMA_BASE_URL", DEFAULT_BASE_URL),
-        temperature=0.1,
-        num_predict=MAX_NOTE_TOKENS,
-        num_ctx=4096,
+    return build_ollama_llm(
+        os.getenv("OLLAMA_MODEL", DEFAULT_MODEL),
+        os.getenv("OLLAMA_BASE_URL", DEFAULT_BASE_URL),
+        max_tokens=MAX_NOTE_TOKENS,
     )
+
+
+def _make_tool(name: str, description: str, body: Callable[..., str]) -> Any:
+    """Wrap a zero-argument callable as a CrewAI tool."""
+    from crewai.tools import BaseTool
+    from pydantic import BaseModel, Field
+
+    class _ToolInput(BaseModel):
+        query: str = Field(
+            default="",
+            description="Unused. Pass an empty string.",
+        )
+
+    class _FunctionTool(BaseTool):
+        args_schema: type[BaseModel] = _ToolInput
+
+        def _run(self, *args: Any, **kwargs: Any) -> str:
+            return body(*args, **kwargs)
+
+    return _FunctionTool(name=name, description=description)
 
 
 def _summarize(result: Any) -> str:
@@ -178,11 +195,10 @@ def run_crew_agent(
     if crew_agents_enabled():
         try:
             from crewai import Agent, Crew, Process, Task
-            from langchain_core.tools import Tool
 
-            tool = Tool(
+            tool = _make_tool(
                 name=f"{agent_name}_tool",
-                func=tool_body,
+                body=tool_body,
                 description=(
                     f"Runs the {spec['role']} analysis and returns a summary. "
                     "Call it once with an empty string."
@@ -220,8 +236,12 @@ def run_crew_agent(
             )
 
             note = _redact_ai_output(_extract_text(crew.kickoff())).strip()
-            if "iteration limit or time limit" in note:
-                # CrewAI's stop message is not an analysis; do not keep it.
+            if (
+                "iteration limit or time limit" in note
+                or note.startswith(("Thought:", "Action:"))
+            ):
+                # CrewAI's stop message or leaked reasoning is not an
+                # analysis; do not keep it.
                 note = ""
                 info["status"] = "incomplete"
                 info["warning"] = (

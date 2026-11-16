@@ -1,14 +1,15 @@
 
-from crewai import Agent, Task, Crew, Process
-from langchain_community.llms import Ollama
+import os
+
+from crewai import LLM, Agent, Task, Crew, Process
 
 
 def main():
     print("Creating CrewAI agent with local Ollama...")
 
-    llm = Ollama(
-        model="qwen2.5:3b",
-        base_url="http://127.0.0.1:11434",
+    llm = LLM(
+        model=f"ollama/{os.getenv('OLLAMA_MODEL', 'mistral:latest')}",
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         temperature=0.1,
     )
 

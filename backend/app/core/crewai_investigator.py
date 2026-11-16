@@ -5,8 +5,7 @@ import re
 import time
 from typing import Any
 
-from crewai import Agent, Crew, Process, Task
-from langchain_community.llms import Ollama
+from crewai import LLM, Agent, Crew, Process, Task
 
 
 logger = logging.getLogger("cyberguard.crewai")
@@ -16,7 +15,7 @@ MAX_TEXT_PER_RECORD = 600
 MAX_OUTPUT_TOKENS = 500
 MAX_AGENT_SECONDS = 120
 
-DEFAULT_MODEL = "qwen2.5:3b"
+DEFAULT_MODEL = "mistral:latest"
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 
 REQUIRED_HEADINGS = [
@@ -25,6 +24,23 @@ REQUIRED_HEADINGS = [
     "3. CONTRADICTIONS AND GAPS",
     "4. RECOMMENDED NEXT STEPS",
 ]
+
+def build_ollama_llm(
+    model_name: str,
+    base_url: str,
+    max_tokens: int,
+) -> LLM:
+    """Create a CrewAI LLM that talks to the local Ollama server."""
+    if not model_name.startswith("ollama/"):
+        model_name = f"ollama/{model_name}"
+
+    return LLM(
+        model=model_name,
+        base_url=base_url,
+        temperature=0.1,
+        max_tokens=max_tokens,
+    )
+
 
 SECRET_PATTERNS = [
     re.compile(
@@ -388,12 +404,10 @@ def review_investigation_with_crew(
             model_name,
         )
 
-        llm = Ollama(
-            model=model_name,
-            base_url=base_url,
-            temperature=0.1,
-            num_predict=MAX_OUTPUT_TOKENS,
-            num_ctx=4096,
+        llm = build_ollama_llm(
+            model_name,
+            base_url,
+            max_tokens=MAX_OUTPUT_TOKENS,
         )
 
         analyst = Agent(
