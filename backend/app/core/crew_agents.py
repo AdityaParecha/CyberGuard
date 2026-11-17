@@ -20,12 +20,11 @@ import time
 from typing import Any, Callable
 
 from backend.app.core.crewai_investigator import (
-    DEFAULT_BASE_URL,
-    DEFAULT_MODEL,
     _redact_ai_output,
     _redact_secrets_for_ai,
-    build_ollama_llm,
+    build_llm,
 )
+from backend.app.core.llm_config import pace_llm_calls
 
 logger = logging.getLogger("cyberguard.crew_agents")
 
@@ -107,11 +106,7 @@ def crew_agents_enabled() -> bool:
 
 
 def _build_llm() -> Any:
-    return build_ollama_llm(
-        os.getenv("OLLAMA_MODEL", DEFAULT_MODEL),
-        os.getenv("OLLAMA_BASE_URL", DEFAULT_BASE_URL),
-        max_tokens=MAX_NOTE_TOKENS,
-    )
+    return build_llm(max_tokens=MAX_NOTE_TOKENS)
 
 
 def _make_tool(name: str, description: str, body: Callable[..., str]) -> Any:
@@ -235,6 +230,7 @@ def run_crew_agent(
                 verbose=False,
             )
 
+            pace_llm_calls()
             note = _redact_ai_output(_extract_text(crew.kickoff())).strip()
             if (
                 "iteration limit or time limit" in note

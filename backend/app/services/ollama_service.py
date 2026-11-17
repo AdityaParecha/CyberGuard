@@ -6,8 +6,16 @@ import re
 import urllib.error
 import urllib.request
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral:latest")
+from backend.app.core.llm_config import (
+    extra_llm_params,
+    llm_model,
+    ollama_base_url,
+    ollama_model_name,
+    uses_ollama,
+)
+
+OLLAMA_BASE_URL = ollama_base_url()
+OLLAMA_MODEL = ollama_model_name()
 
 REQUEST_TIMEOUT_SECONDS = 180
 MAX_EVIDENCE_CHARS = 10000
@@ -91,6 +99,17 @@ def _redact_sensitive_text(text: str) -> str:
 
 def check_ollama_health() -> dict:
     """Check whether Ollama and the configured model are available."""
+    if not uses_ollama():
+        # Hosted model: there is no local server to probe. Report the
+        # configured model; API errors surface when a call is made.
+        return {
+            "available": True,
+            "model": llm_model(),
+            "model_available": True,
+            "provider": llm_model().split("/", 1)[0],
+            "hosted": True,
+        }
+
     url = f"{OLLAMA_BASE_URL}/api/tags"
 
     try:
@@ -150,8 +169,48 @@ def _validate_evidence_text(evidence_text: str) -> str:
     return evidence_text
 
 
+def _generate_hosted_analysis(prompt: str) -> dict:
+    """Generate the analysis through LiteLLM for a hosted model."""
+    import litellm
+
+    try:
+        response = litellm.completion(
+            model=llm_model(),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=MAX_GENERATED_TOKENS * 3,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            **extra_llm_params(),
+        )
+    except Exception as error:
+        # Never echo provider error bodies; they may contain the prompt.
+        raise RuntimeError(
+            f"Hosted model call failed ({type(error).__name__})."
+        ) from error
+
+    raw_analysis = (response.choices[0].message.content or "").strip()
+
+    if not raw_analysis:
+        raise RuntimeError("The hosted model returned an empty analysis.")
+
+    usage = getattr(response, "usage", None)
+
+    return {
+        "model": llm_model(),
+        "analysis": _redact_sensitive_text(raw_analysis),
+        "done": True,
+        "metrics": {
+            "prompt_tokens": getattr(usage, "prompt_tokens", None),
+            "completion_tokens": getattr(usage, "completion_tokens", None),
+        },
+    }
+
+
 def _generate_analysis(prompt: str) -> dict:
     """Generate a bounded analysis and redact sensitive output."""
+    if not uses_ollama():
+        return _generate_hosted_analysis(prompt)
+
     health = check_ollama_health()
 
     if not health["available"]:

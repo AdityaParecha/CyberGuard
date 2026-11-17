@@ -9,6 +9,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.lite_llm import LiteLlm
 
 from backend.app.adk.review_schema import ForensicReview
+from backend.app.core.llm_config import adk_model, extra_llm_params
 
 
 logger = logging.getLogger("cyberguard.adk.reviewer")
@@ -104,7 +105,8 @@ root_agent = LlmAgent(
     name="cyberguard_adk_forensic_reviewer",
 
     model=LiteLlm(
-        model=f"ollama_chat/{os.getenv('OLLAMA_MODEL', 'mistral:latest')}"
+        model=adk_model(),
+        **extra_llm_params(),
     ),
 
     description=(

@@ -1,0 +1,39 @@
+# Slim image for Render's free tier (512 MB RAM).
+# No Ollama here: the AI runs on a hosted API chosen with LLM_MODEL
+# (for example groq/openai/gpt-oss-20b with GROQ_API_KEY).
+
+# ---- Build the React frontend ------------------------------------------
+FROM node:20-slim AS frontend
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# ---- Runtime ------------------------------------------------------------
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends sleuthkit \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONWARNINGS=ignore \
+    PORT=10000 \
+    SERVE_FRONTEND=1
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend ./backend
+COPY data/samples ./data/samples
+COPY --from=frontend /build/dist ./frontend/dist
+RUN mkdir -p data/uploads
+
+EXPOSE 10000
+
+# The A2A reviewer calls back into this process, so its URL must use the
+# same port the server listens on.
+CMD ["sh", "-c", "export CYBERGUARD_A2A_URL=${CYBERGUARD_A2A_URL:-http://127.0.0.1:${PORT}/}; exec python -m uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT} --timeout-keep-alive 120"]

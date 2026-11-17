@@ -7,12 +7,20 @@ from typing import Any
 
 from crewai import LLM, Agent, Crew, Process, Task
 
+from backend.app.core.llm_config import (
+    extra_llm_params,
+    llm_model,
+    ollama_base_url,
+    pace_llm_calls,
+    uses_ollama,
+)
+
 
 logger = logging.getLogger("cyberguard.crewai")
 
 MAX_EVIDENCE_RECORDS = 12
 MAX_TEXT_PER_RECORD = 600
-MAX_OUTPUT_TOKENS = 500
+MAX_OUTPUT_TOKENS = 900
 MAX_AGENT_SECONDS = 120
 
 DEFAULT_MODEL = "mistral:latest"
@@ -25,21 +33,24 @@ REQUIRED_HEADINGS = [
     "4. RECOMMENDED NEXT STEPS",
 ]
 
-def build_ollama_llm(
-    model_name: str,
-    base_url: str,
-    max_tokens: int,
-) -> LLM:
-    """Create a CrewAI LLM that talks to the local Ollama server."""
-    if not model_name.startswith("ollama/"):
-        model_name = f"ollama/{model_name}"
+def build_llm(max_tokens: int) -> LLM:
+    """CrewAI LLM for the configured model (local Ollama or a hosted API)."""
+    params = {
+        "model": llm_model(),
+        "temperature": 0.1,
+        "max_tokens": max_tokens,
+        **extra_llm_params(),
+    }
 
-    return LLM(
-        model=model_name,
-        base_url=base_url,
-        temperature=0.1,
-        max_tokens=max_tokens,
-    )
+    if uses_ollama():
+        params["base_url"] = ollama_base_url()
+
+    return LLM(**params)
+
+
+# Kept for callers written against the earlier helper name.
+def build_ollama_llm(model_name: str, base_url: str, max_tokens: int) -> LLM:
+    return build_llm(max_tokens)
 
 
 SECRET_PATTERNS = [
@@ -388,15 +399,7 @@ def review_investigation_with_crew(
             _safe_text(investigation_goal, 500)
         )
 
-        model_name = os.getenv(
-            "OLLAMA_MODEL",
-            DEFAULT_MODEL,
-        )
-
-        base_url = os.getenv(
-            "OLLAMA_BASE_URL",
-            DEFAULT_BASE_URL,
-        )
+        model_name = llm_model()
 
         logger.info(
             "Starting CrewAI review: evidence_count=%d model=%s",
@@ -404,11 +407,7 @@ def review_investigation_with_crew(
             model_name,
         )
 
-        llm = build_ollama_llm(
-            model_name,
-            base_url,
-            max_tokens=MAX_OUTPUT_TOKENS,
-        )
+        llm = build_llm(max_tokens=MAX_OUTPUT_TOKENS)
 
         analyst = Agent(
             role="Digital Forensics Analyst",
@@ -492,6 +491,7 @@ RULES:
             verbose=False,
         )
 
+        pace_llm_calls()
         result = crew.kickoff()
 
         raw_analysis = _extract_result_text(result)

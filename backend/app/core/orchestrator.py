@@ -19,6 +19,16 @@ from backend.app.agents.threat_agent import map_known_patterns
 from backend.app.agents.endpoint_agent import analyze_endpoint_evidence
 
 from backend.app.core.crew_agents import run_crew_agent
+from backend.app.core.llm_config import llm_model, uses_ollama
+
+
+def _rate_limit_stats() -> dict | None:
+    """Hosted-model usage against the free tier's limits (None locally)."""
+    if uses_ollama():
+        return None
+    from backend.app.core.rate_limiter import stats
+
+    return stats()
 from backend.app.core.evidence_manager import summarize_evidence
 from backend.app.core.crewai_investigator import (
     review_investigation_with_crew,
@@ -939,10 +949,8 @@ def run_investigation(
             "stage_count": len(stages),
             "failed_stage_count": failed_stage_count,
             "incomplete_stage_count": incomplete_stage_count,
-            "model": os.getenv(
-                "OLLAMA_MODEL",
-                "mistral:latest",
-            ),
+            "model": llm_model(),
+            "llm_rate_limit": _rate_limit_stats(),
             "ollama_base_url": os.getenv(
                 "OLLAMA_BASE_URL",
                 "http://127.0.0.1:11434",

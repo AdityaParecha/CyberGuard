@@ -22,7 +22,9 @@ from backend.app.a2a.review_agent import ForensicReviewExecutor
 
 HOST = "127.0.0.1"
 PORT = int(os.getenv("CYBERGUARD_A2A_PORT", "8000"))
-BASE_URL = "http://127.0.0.1:8000/"
+# Must match the address this process actually listens on, because the
+# A2A client sends review requests to the URL published in this card.
+BASE_URL = os.getenv("CYBERGUARD_A2A_URL", "http://127.0.0.1:8000/")
 
 skill = AgentSkill(
     id="forensic_quality_review",

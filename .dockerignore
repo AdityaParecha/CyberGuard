@@ -1,0 +1,11 @@
+.git
+.venv
+.venv-crewai
+venv
+**/__pycache__
+**/*.pyc
+.env
+frontend/node_modules
+frontend/dist
+data/uploads
+deploy

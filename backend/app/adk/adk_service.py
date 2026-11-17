@@ -13,6 +13,7 @@ from google.genai import types
 
 from backend.app.adk.agent import root_agent
 from backend.app.adk.review_schema import ForensicReview
+from backend.app.core.llm_config import pace_llm_calls
 
 
 logger = logging.getLogger("cyberguard.adk.service")
@@ -260,6 +261,9 @@ async def review_investigation(
         len(prompt),
         ADK_REVIEW_TIMEOUT_SECONDS,
     )
+
+    # Respect the free hosted tier's per-minute limits (no-op locally).
+    await asyncio.to_thread(pace_llm_calls)
 
     try:
         async with asyncio.timeout(ADK_REVIEW_TIMEOUT_SECONDS):

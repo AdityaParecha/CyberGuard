@@ -1,0 +1,41 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: cyberguard
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.render
+    healthCheckPath: /api/health
+    envVars:
+      # Any LiteLLM model string. Groq's free tier, no card required.
+      - key: LLM_MODEL
+        value: groq/qwen/qwen3.8-27b
+      # Secret: Render asks for the value when you create the Blueprint.
+      # It is stored encrypted by Render and never written to this repo.
+      - key: GROQ_API_KEY
+        sync: false
+      # Groq free-tier limits for qwen/qwen3.8-27b (console.groq.com ->
+      # Settings -> Limits). Every AI call waits until it fits under 80% of
+      # these, so the per-minute limits are never exceeded.
+      - key: LLM_RPM_LIMIT
+        value: "30"
+      - key: LLM_TPM_LIMIT
+        value: "8000"
+      - key: LLM_RPD_LIMIT
+        value: "1000"
+      - key: LLM_TPD_LIMIT
+        value: "200000"
+      - key: LLM_LIMIT_SAFETY
+        value: "0.8"
+      - key: LLM_NUM_RETRIES
+        value: "4"
+      - key: CYBERGUARD_CREW_AGENTS
+        value: "1"
+
+      # Optional Gemini fallback (only once you have a VALID Gemini key,
+      # which starts with "AIza"). In Render -> Environment:
+      #   1. replace LLM_MODEL above with
+      #      LLM_MODELS = groq/qwen/qwen3.8-27b,gemini/gemini-2.5-flash-lite
+      #   2. add GEMINI_API_KEY as a secret
+      #   3. set GEMINI_RPM_LIMIT / GEMINI_TPM_LIMIT / GEMINI_RPD_LIMIT /
+      #      GEMINI_TPD_LIMIT from aistudio.google.com -> Rate limit
