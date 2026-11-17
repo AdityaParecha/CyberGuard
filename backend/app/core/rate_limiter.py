@@ -216,6 +216,34 @@ class RateLimiter:
 
 
 _limiters: dict[str, RateLimiter] = {}
+_usage_lock = threading.Lock()
+_usage_by_model: dict[str, dict[str, int]] = {}
+
+
+def _record_usage(model: str, response: Any) -> None:
+    """Count calls and input/output tokens per model (for cost estimates)."""
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+
+    def read(name: str) -> int:
+        value = getattr(usage, name, None) if usage is not None else None
+        if value is None and isinstance(usage, dict):
+            value = usage.get(name)
+        return int(value or 0)
+
+    with _usage_lock:
+        entry = _usage_by_model.setdefault(
+            model, {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+        )
+        entry["calls"] += 1
+        entry["prompt_tokens"] += read("prompt_tokens")
+        entry["completion_tokens"] += read("completion_tokens")
+
+
+def usage_by_model() -> dict[str, dict[str, int]]:
+    with _usage_lock:
+        return {model: dict(values) for model, values in _usage_by_model.items()}
 _limiters_lock = threading.Lock()
 _fallback_count = 0
 
@@ -249,6 +277,7 @@ def stats() -> dict[str, Any]:
         "model_chain": model_chain(""),
         "fallbacks": _fallback_count,
         "providers": providers,
+        "usage_by_model": usage_by_model(),
     }
 
 
@@ -360,6 +389,7 @@ def call_with_limit(original: Callable, requested: str, args: tuple, kwargs: dic
 
             if not call_kwargs.get("stream"):
                 limiter.settle(entry, _usage_tokens(response))
+                _record_usage(model, response)
             return response
 
         if not is_last:
@@ -400,6 +430,7 @@ async def acall_with_limit(original: Callable, requested: str, args: tuple, kwar
 
             if not call_kwargs.get("stream"):
                 limiter.settle(entry, _usage_tokens(response))
+                _record_usage(model, response)
             return response
 
         if not is_last:

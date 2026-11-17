@@ -421,9 +421,38 @@ function AccuracyEvaluation({ result }) {
           Accuracy, precision, recall, and F1 score have not been calculated for this investigation. These require labelled test data and measured predictions; evidence counts and hypothesis confidence scores are not substitutes for accuracy.
         </p>
       )}
+      {hasMetrics && metrics.scope && (
+        <p className="muted">
+          {metrics.scope}
+          {metrics.dataset
+            ? ` Dataset: ${metrics.dataset.size} lines (${metrics.dataset.event_lines} security events, ${metrics.dataset.routine_lines} routine).`
+            : ""}
+          {metrics.averaging ? ` Precision, recall and F1 are ${metrics.averaging}.` : ""}
+        </p>
+      )}
+      {Array.isArray(metrics?.per_class) && metrics.per_class.length > 0 && (
+        <div className="table-scroll">
+          <table className="monitoring-table">
+            <thead>
+              <tr><th>Event type</th><th>Lines</th><th>Precision</th><th>Recall</th><th>F1</th></tr>
+            </thead>
+            <tbody>
+              {metrics.per_class.map((row) => (
+                <tr key={row.label}>
+                  <td>{row.label.replaceAll("_", " ")}</td>
+                  <td>{row.support}</td>
+                  <td>{formatMetric(row.precision)}</td>
+                  <td>{formatMetric(row.recall)}</td>
+                  <td>{formatMetric(row.f1_score)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {(hasMatrixArray || hasMatrixObject) && (
         <div className="confusion-matrix-wrap">
-          <h4>Confusion matrix</h4>
+          <h4>{metrics?.confusion_matrix_label ?? "Confusion matrix"}</h4>
           {hasMatrixArray ? (
             <div className="table-scroll">
               <table className="confusion-matrix">
@@ -507,7 +536,7 @@ function MonitoringPanel({ monitoring }) {
 
       <p className="muted">
         {monitoring.estimated_cost != null
-          ? `Estimated cost: $${monitoring.estimated_cost}. `
+          ? `Estimated cost: $${Number(monitoring.estimated_cost).toFixed(4)}. `
           : ""}
         {displayValue(monitoring.estimated_cost_note, "")}
       </p>
@@ -1319,7 +1348,7 @@ ${section(
    <p><b>Model:</b> ${safe(monitoring.model)}</p>
    <p><b>Provider:</b> ${safe(monitoring.provider, "Not reported")}</p>
    ${monitoring.ollama_base_url ? `<p><b>Ollama base URL:</b> ${safe(monitoring.ollama_base_url)}</p>` : ""}
-   <p><b>Estimated cost:</b> $${safe(monitoring.estimated_cost ?? monitoring.cost_estimate, "Not measured")}</p>
+   <p><b>Estimated cost:</b> ${monitoring.estimated_cost != null ? `$${Number(monitoring.estimated_cost).toFixed(4)}` : "Not measured"}</p>
    <p>${safe(monitoring.estimated_cost_note, "")}</p>
    ${monitoringStagesHtml}`
 )}

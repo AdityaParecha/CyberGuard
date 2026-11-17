@@ -45,6 +45,9 @@ class IncidentResult(BaseModel):
     crewai_review: Optional[Any] = None
     a2a_review: Optional[dict[str, Any]] = None
 
+    # Benchmark scores of the log detector (not scores of this investigation).
+    evaluation_metrics: Optional[dict[str, Any]] = None
+
     crew_agents: list[dict[str, Any]] = Field(default_factory=list)
 
     agent_findings: dict[str, Any] = Field(default_factory=dict)

@@ -47,20 +47,30 @@ def _provider_label() -> str:
     return " -> ".join(providers)
 
 
-def _usage_totals() -> tuple[int, int]:
-    """Process-wide hosted-model (calls, tokens) so far; zeros locally."""
-    usage = _rate_limit_stats()
-    if not usage:
-        return 0, 0
-    providers = usage.get("providers", {}).values()
-    return (
-        sum(p.get("total_calls", 0) for p in providers),
-        sum(p.get("total_tokens", 0) for p in providers),
-    )
+def _usage_totals() -> dict[str, dict[str, int]]:
+    """Process-wide hosted-model usage per model so far; empty locally."""
+    if uses_ollama():
+        return {}
+    from backend.app.core.rate_limiter import usage_by_model
+
+    return usage_by_model()
 
 
-def _usage_and_cost(before: tuple[int, int]) -> dict[str, Any]:
-    """Model calls, tokens and cost for this one investigation."""
+def _usage_delta(
+    before: dict[str, dict[str, int]],
+    after: dict[str, dict[str, int]],
+) -> dict[str, dict[str, int]]:
+    delta = {}
+    for model, values in after.items():
+        prior = before.get(model, {})
+        change = {key: values.get(key, 0) - prior.get(key, 0) for key in values}
+        if any(change.values()):
+            delta[model] = change
+    return delta
+
+
+def _usage_and_cost(before: dict[str, dict[str, int]]) -> dict[str, Any]:
+    """Model calls, input/output tokens and estimated cost for this run."""
     if uses_ollama():
         return {
             "ollama_base_url": os.getenv(
@@ -72,18 +82,39 @@ def _usage_and_cost(before: tuple[int, int]) -> dict[str, Any]:
             ),
         }
 
-    calls_now, tokens_now = _usage_totals()
-    calls = calls_now - before[0]
-    tokens = tokens_now - before[1]
+    from backend.app.core.pricing import estimate_cost
+
+    usage = _usage_delta(before, _usage_totals())
+    calls = sum(v.get("calls", 0) for v in usage.values())
+    priced = estimate_cost(usage, primary_model=llm_model())
+
+    rates = "; ".join(
+        f"{item['model']}: ${item['input_price_per_million']:.2f}/1M input, "
+        f"${item['output_price_per_million']:.2f}/1M output"
+        for item in priced["by_model"]
+    )
+    note = (
+        f"{calls} model calls, {priced['input_tokens']:,} input + "
+        f"{priced['output_tokens']:,} output tokens. Estimated at the "
+        f"provider's on-demand prices ({rates or 'no published price found'}). "
+        f"Actual charge on the {_provider_label()} free tier: $0."
+    )
+    if priced["unpriced_models"]:
+        note += (
+            " No price on file for: "
+            + ", ".join(priced["unpriced_models"])
+            + " (not included)."
+        )
+
     return {
         "llm_calls": calls,
-        "llm_tokens": tokens,
-        "estimated_cost": 0,
-        "estimated_cost_note": (
-            f"{calls} hosted model calls, {tokens} tokens, on the "
-            f"{_provider_label()} free tier: no charge. Usage is kept under "
-            "the free-tier limits by the built-in rate limiter."
-        ),
+        "llm_input_tokens": priced["input_tokens"],
+        "llm_output_tokens": priced["output_tokens"],
+        "llm_tokens": priced["input_tokens"] + priced["output_tokens"],
+        "estimated_cost": priced["cost_usd"],
+        "estimated_cost_breakdown": priced["by_model"],
+        "actual_charge": 0,
+        "estimated_cost_note": note,
     }
 from backend.app.core.evidence_manager import summarize_evidence
 from backend.app.core.crewai_investigator import (
@@ -91,6 +122,7 @@ from backend.app.core.crewai_investigator import (
 )
 
 from backend.app.models.incident import IncidentRequest, IncidentResult
+from backend.app.evaluation.evaluator import evaluate_log_detector
 from backend.app.models.evidence import Evidence
 from backend.app.models.hypothesis import Hypothesis
 
@@ -1087,6 +1119,7 @@ def run_investigation(
             "forensic_artifact_analyses": artifact_analyses,
             "crewai_review": crewai_review,
             "a2a_review": a2a_review,
+            "evaluation_metrics": evaluate_log_detector(),
             "crew_agents": agent_runs,
             "agent_findings": {
                 "forensic": forensic_findings,

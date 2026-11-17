@@ -75,6 +75,14 @@ class FileExtractionRequest(FilesystemInspectionRequest):
     )
 
 
+@router.get("/evaluation/log-detector")
+def log_detector_evaluation():
+    """Accuracy, precision, recall and F1 of the log detector on the benchmark."""
+    from backend.app.evaluation.evaluator import evaluate_log_detector
+
+    return evaluate_log_detector()
+
+
 @router.get("/health")
 def health_check():
     return {
