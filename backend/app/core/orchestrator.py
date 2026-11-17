@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -41,6 +42,7 @@ from backend.app.models.hypothesis import Hypothesis
 from backend.app.services.protocol_clients import call_a2a_review
 
 from backend.app.services.tsk_service import (
+    inspect_partitions,
     list_filesystem_entries,
     extract_file_content,
 )
@@ -300,6 +302,60 @@ def _build_a2a_review_payload(
     }
 
 
+_MMLS_ROW = re.compile(
+    r"^\s*\d+:\s+(?P<slot>\S+)\s+(?P<start>\d+)\s+(?P<end>\d+)"
+    r"\s+(?P<length>\d+)\s+(?P<description>.*)$"
+)
+
+
+def _partition_offsets(image: Path) -> list[int]:
+    """Start sectors of data partitions reported by mmls, largest first."""
+    result = inspect_partitions(image)
+    if not result.get("success"):
+        return []
+
+    partitions = []
+    for line in str(result.get("stdout", "")).splitlines():
+        match = _MMLS_ROW.match(line)
+        if not match:
+            continue
+        slot = match.group("slot")
+        # Skip partition-table metadata ("Meta") and unallocated gaps ("---").
+        if slot == "Meta" or slot.startswith("-"):
+            continue
+        partitions.append(
+            (int(match.group("length")), int(match.group("start")))
+        )
+
+    return [start for _, start in sorted(partitions, reverse=True)]
+
+
+def _list_image_filesystem(image: Path) -> tuple[dict[str, Any], int | None]:
+    """
+    List files with fls. A bare filesystem image is read directly; a full
+    disk image is read by trying each data partition found by mmls.
+    Returns the listing and the partition offset (in sectors) that worked.
+    """
+    listing = list_filesystem_entries(image)
+    if listing.get("success"):
+        return listing, None
+
+    offsets = _partition_offsets(image)
+    for offset in offsets:
+        listing = list_filesystem_entries(image, partition_offset=offset)
+        if listing.get("success"):
+            logger.info(
+                "Read filesystem from partition at sector offset %d", offset
+            )
+            return listing, offset
+
+    raise RuntimeError(
+        "The Sleuth Kit found no readable filesystem in this image "
+        f"(checked the whole image and {len(offsets)} partition(s)). "
+        "Check that it is a supported disk or filesystem image."
+    )
+
+
 def _collect_image_artifacts(
     image_path: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -311,12 +367,7 @@ def _collect_image_artifacts(
             "Please provide an absolute local forensic image path."
         )
 
-    listing = list_filesystem_entries(image)
-
-    if not listing.get("success"):
-        raise RuntimeError(
-            "The Sleuth Kit could not list filesystem entries."
-        )
+    listing, partition_offset = _list_image_filesystem(image)
 
     listing_text = listing.get("stdout", "")
 
@@ -376,6 +427,7 @@ def _collect_image_artifacts(
             extracted = extract_file_content(
                 image_path=image,
                 metadata_address=metadata_address,
+                partition_offset=partition_offset,
                 max_bytes=MAX_TEXT_ARTIFACT_BYTES,
             )
 
