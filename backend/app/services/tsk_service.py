@@ -2,9 +2,13 @@
 import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 SUPPORTED_IMAGE_EXTENSIONS = {".dd", ".img", ".raw", ".e01"}
+EWF_EXTENSIONS = {".e01"}
+EWF_EXPORT_TIMEOUT_SECONDS = 1800
+_EWF_EXPORT_LOCK = threading.Lock()
 ALLOWED_TOOLS = {"mmls", "fls", "fsstat", "icat"}
 
 COMMAND_TIMEOUT_SECONDS = 120
@@ -28,7 +32,76 @@ def validate_image(image_path: str | Path) -> Path:
     if path.stat().st_size <= 0:
         raise ValueError("The forensic image is empty.")
 
+    if path.suffix.lower() in EWF_EXTENSIONS:
+        return _raw_copy_of_ewf(path)
+
     return path
+
+
+def _raw_copy_of_ewf(path: Path) -> Path:
+    """
+    Return a raw copy of an EnCase (.E01) image, created once with libewf's
+    own ewfexport tool.
+
+    Some Linux builds of The Sleuth Kit crash when reading EWF images at a
+    partition offset, so on servers TSK works on the exported raw copy, which
+    it reads reliably. Where ewfexport is not installed (for example a
+    Windows workstation whose TSK reads EWF directly), the E01 is used as is.
+    The original image is never modified.
+    """
+    exporter = shutil.which("ewfexport")
+    if exporter is None:
+        return path
+
+    target_base = path.with_name(path.name + ".export")
+    raw = target_base.with_name(target_base.name + ".raw")
+
+    with _EWF_EXPORT_LOCK:
+        if raw.is_file() and raw.stat().st_size > 0:
+            return raw
+
+        raw.unlink(missing_ok=True)
+
+        try:
+            completed = subprocess.run(
+                [
+                    exporter,
+                    "-u",          # unattended: no prompts
+                    "-q",          # quiet
+                    "-f", "raw",   # output format
+                    "-S", "0",     # single output file, no splitting
+                    "-t", str(target_base),
+                    str(path),
+                ],
+                shell=False,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=EWF_EXPORT_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raw.unlink(missing_ok=True)
+            raise TimeoutError(
+                "Converting the E01 image took longer than "
+                f"{EWF_EXPORT_TIMEOUT_SECONDS} seconds."
+            ) from error
+
+        if completed.returncode != 0 or not raw.is_file():
+            raw.unlink(missing_ok=True)
+            reason = next(
+                (
+                    line.strip()
+                    for line in (completed.stderr or "").splitlines()
+                    if line.strip()
+                ),
+                "no details",
+            )
+            raise RuntimeError(
+                f"Could not read the E01 image with ewfexport: {reason[:200]}"
+            )
+
+    return raw
 
 
 def find_tsk_tool(tool_name: str) -> str:

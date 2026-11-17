@@ -30,6 +30,61 @@ def _rate_limit_stats() -> dict | None:
     from backend.app.core.rate_limiter import stats
 
     return stats()
+
+
+def _provider_label() -> str:
+    """'ollama' locally, otherwise the hosted provider(s), e.g. 'groq'."""
+    if uses_ollama():
+        return "ollama"
+    chain = [
+        m.strip() for m in os.getenv("LLM_MODELS", "").split(",") if m.strip()
+    ] or [llm_model()]
+    providers = []
+    for model in chain:
+        name = model.split("/", 1)[0]
+        if name not in providers:
+            providers.append(name)
+    return " -> ".join(providers)
+
+
+def _usage_totals() -> tuple[int, int]:
+    """Process-wide hosted-model (calls, tokens) so far; zeros locally."""
+    usage = _rate_limit_stats()
+    if not usage:
+        return 0, 0
+    providers = usage.get("providers", {}).values()
+    return (
+        sum(p.get("total_calls", 0) for p in providers),
+        sum(p.get("total_tokens", 0) for p in providers),
+    )
+
+
+def _usage_and_cost(before: tuple[int, int]) -> dict[str, Any]:
+    """Model calls, tokens and cost for this one investigation."""
+    if uses_ollama():
+        return {
+            "ollama_base_url": os.getenv(
+                "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
+            ),
+            "estimated_cost": 0,
+            "estimated_cost_note": (
+                "Local Ollama model: no per-token API cost."
+            ),
+        }
+
+    calls_now, tokens_now = _usage_totals()
+    calls = calls_now - before[0]
+    tokens = tokens_now - before[1]
+    return {
+        "llm_calls": calls,
+        "llm_tokens": tokens,
+        "estimated_cost": 0,
+        "estimated_cost_note": (
+            f"{calls} hosted model calls, {tokens} tokens, on the "
+            f"{_provider_label()} free tier: no charge. Usage is kept under "
+            "the free-tier limits by the built-in rate limiter."
+        ),
+    }
 from backend.app.core.evidence_manager import summarize_evidence
 from backend.app.core.crewai_investigator import (
     review_investigation_with_crew,
@@ -340,6 +395,8 @@ def _list_image_filesystem(image: Path) -> tuple[dict[str, Any], int | None]:
     if listing.get("success"):
         return listing, None
 
+    first_error = _tsk_error_text(listing)
+
     offsets = _partition_offsets(image)
     for offset in offsets:
         listing = list_filesystem_entries(image, partition_offset=offset)
@@ -352,8 +409,16 @@ def _list_image_filesystem(image: Path) -> tuple[dict[str, Any], int | None]:
     raise RuntimeError(
         "The Sleuth Kit found no readable filesystem in this image "
         f"(checked the whole image and {len(offsets)} partition(s)). "
-        "Check that it is a supported disk or filesystem image."
+        f"fls reported: {first_error or 'no details'}"
     )
+
+
+def _tsk_error_text(result: dict[str, Any]) -> str:
+    """First line of a TSK tool's error output (tool messages only)."""
+    for line in str(result.get("stderr", "")).splitlines():
+        if line.strip():
+            return line.strip()[:200]
+    return ""
 
 
 def _collect_image_artifacts(
@@ -499,6 +564,7 @@ def run_investigation(
 ) -> dict[str, Any]:
 
     total_started = time.perf_counter()
+    usage_before = _usage_totals()
 
     stages: list[dict[str, Any]] = []
     agent_runs: list[dict[str, Any]] = []
@@ -594,7 +660,8 @@ def run_investigation(
                         "path": request.image_path,
                         "error": (
                             "Collection failed: "
-                            f"{type(error).__name__}"
+                            f"{type(error).__name__}: "
+                            f"{str(error)[:400]}"
                         ),
                     })
 
@@ -1002,15 +1069,9 @@ def run_investigation(
             "failed_stage_count": failed_stage_count,
             "incomplete_stage_count": incomplete_stage_count,
             "model": llm_model(),
+            "provider": _provider_label(),
             "llm_rate_limit": _rate_limit_stats(),
-            "ollama_base_url": os.getenv(
-                "OLLAMA_BASE_URL",
-                "http://127.0.0.1:11434",
-            ),
-            "estimated_cost": None,
-            "estimated_cost_note": (
-                "Cost is not measured by this local Ollama workflow."
-            ),
+            **_usage_and_cost(usage_before),
         }
 
         result_data = {

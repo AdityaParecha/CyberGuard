@@ -15,7 +15,7 @@ FROM python:3.12-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        curl ca-certificates zstd sleuthkit \
+        curl ca-certificates zstd sleuthkit ewf-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Ollama (CPU). The install script skips systemd setup inside Docker.

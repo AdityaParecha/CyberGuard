@@ -335,7 +335,7 @@ function ADKReview({ review }) {
     <div className="adk-review">
       <div className="adk-review-header">
         <span className={`adk-status adk-status-${status.replaceAll("_", "-")}`}>{status.replaceAll("_", " ")}</span>
-        <span className="muted">Independent Google ADK review · Ollama</span>
+        <span className="muted">Independent Google ADK review</span>
       </div>
       <p className="adk-assessment">{displayValue(review.overall_assessment, "No overall assessment was returned.")}</p>
       {claimAssessments.length > 0 && (
@@ -498,28 +498,19 @@ function MonitoringPanel({ monitoring }) {
       </div>
 
       <p className="muted">
-        Model: {displayValue(monitoring.model)} · Base URL:{" "}
-        {displayValue(
-          monitoring.ollama_base_url ?? monitoring.base_url
-        )}
+        Model: {displayValue(monitoring.model)}
+        {monitoring.provider ? ` · Provider: ${monitoring.provider}` : ""}
+        {monitoring.ollama_base_url
+          ? ` · Base URL: ${monitoring.ollama_base_url}`
+          : ""}
       </p>
 
-      {monitoring.estimated_cost == null &&
-      monitoring.cost_estimate == null ? (
-        <p className="muted">
-          {displayValue(
-            monitoring.estimated_cost_note,
-            "Cost estimate: unavailable/not configured for this local run."
-          )}
-        </p>
-      ) : (
-        <p className="muted">
-          Estimated cost:{" "}
-          {displayValue(
-            monitoring.estimated_cost ?? monitoring.cost_estimate
-          )}
-        </p>
-      )}
+      <p className="muted">
+        {monitoring.estimated_cost != null
+          ? `Estimated cost: $${monitoring.estimated_cost}. `
+          : ""}
+        {displayValue(monitoring.estimated_cost_note, "")}
+      </p>
 
       {stages.length > 0 && (
         <div className="table-scroll">
@@ -1326,8 +1317,9 @@ ${section(
    <p><b>Failed stages:</b> ${safe(monitoring.failed_stage_count, 0)}</p>
    <p><b>Incomplete stages:</b> ${safe(monitoring.incomplete_stage_count, 0)}</p>
    <p><b>Model:</b> ${safe(monitoring.model)}</p>
-   <p><b>Ollama base URL:</b> ${safe(monitoring.ollama_base_url ?? monitoring.base_url)}</p>
-   <p><b>Estimated cost:</b> ${safe(monitoring.estimated_cost ?? monitoring.cost_estimate, "Not measured")}</p>
+   <p><b>Provider:</b> ${safe(monitoring.provider, "Not reported")}</p>
+   ${monitoring.ollama_base_url ? `<p><b>Ollama base URL:</b> ${safe(monitoring.ollama_base_url)}</p>` : ""}
+   <p><b>Estimated cost:</b> $${safe(monitoring.estimated_cost ?? monitoring.cost_estimate, "Not measured")}</p>
    <p>${safe(monitoring.estimated_cost_note, "")}</p>
    ${monitoringStagesHtml}`
 )}
